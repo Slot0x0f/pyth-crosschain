@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 import "pyth-sdk-solidity/IPyth.sol";
 import "pyth-sdk-solidity/PythStructs.sol";
 import "openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
+import "./LPToken.sol";
 
 // Example oracle AMM powered by Pyth price feeds.
 //
@@ -26,6 +27,10 @@ contract OracleSwap {
 
     ERC20 public baseToken;
     ERC20 public quoteToken;
+    LPToken public lpToken;
+    mapping(address => uint256) public liquidityProvided;
+    uint256 public feeRateBips = 30; // 0.3% fee rate. 
+
 
     constructor(
         address _pyth,
@@ -39,6 +44,7 @@ contract OracleSwap {
         quoteTokenPriceId = _quoteTokenPriceId;
         baseToken = ERC20(_baseToken);
         quoteToken = ERC20(_quoteToken);
+        lpToken = new LPToken();
     }
 
     // Buy or sell a quantity of the base token. `size` represents the quantity of the base token with the same number
@@ -74,7 +80,9 @@ contract OracleSwap {
 
         // This computation loses precision. The infinite-precision result is between [quoteSize, quoteSize + 1]
         // We need to round this result in favor of the contract.
-        uint256 quoteSize = (size * basePrice) / quotePrice;
+        uint256 fee = (size * feeRateBips) / 10000;
+        uint256 sizeAfterFee = size - fee;
+        uint256 quoteSize = (sizeAfterFee * basePrice) / quotePrice;
 
         // TODO: use confidence interval
 
@@ -89,6 +97,95 @@ contract OracleSwap {
             quoteToken.transfer(msg.sender, quoteSize);
         }
     }
+
+function addLiquidity(uint256 baseAmountDesired, uint256 quoteAmountDesired) external {
+    uint256 totalBaseLiquidity = baseToken.balanceOf(address(this));
+    uint256 totalQuoteLiquidity = quoteToken.balanceOf(address(this));
+
+    uint256 totalLPLiquidity = lpToken.totalSupply();
+    
+    // Calculate the actual amounts of base and quote tokens to deposit, respecting the pool's existing ratio
+    uint256 baseAmount;
+    uint256 quoteAmount;
+    if (totalBaseLiquidity == 0 || totalQuoteLiquidity == 0) {
+        // If the pool is empty, accept the desired amounts
+        baseAmount = baseAmountDesired;
+        quoteAmount = quoteAmountDesired;
+    } else {
+        // Calculate the ideal amount of quote tokens to deposit based on the existing ratio and the desired base amount
+        uint256 quoteAmountIdeal = (baseAmountDesired * totalQuoteLiquidity) / totalBaseLiquidity;
+        if (quoteAmountDesired >= quoteAmountIdeal) {
+            // If the user has provided enough quote tokens, accept the ideal amount and the desired base amount
+            baseAmount = baseAmountDesired;
+            quoteAmount = quoteAmountIdeal;
+        } else {
+            // If the user has not provided enough quote tokens, accept all provided quote tokens and adjust the base amount
+            baseAmount = (quoteAmountDesired * totalBaseLiquidity) / totalQuoteLiquidity;
+            quoteAmount = quoteAmountDesired;
+        }
+    }
+
+    require(baseAmount > 0 && quoteAmount > 0, "Invalid liquidity amounts");
+
+    // Transfer the calculated amounts of base and quote tokens from the user to the contract
+    baseToken.transferFrom(msg.sender, address(this), baseAmount);
+    quoteToken.transferFrom(msg.sender, address(this), quoteAmount);
+
+    // Calculate LP tokens to mint
+    // If the total LP supply is 0, initialize it with the deposited base amount, or create a fixed initial supply
+    uint256 lpAmount = totalLPLiquidity > 0 ? 
+        (baseAmount * totalLPLiquidity) / totalBaseLiquidity : 
+        baseAmount; // or some other initial supply logic
+    
+    // Mint LP tokens to the user
+    lpToken.mint(msg.sender, lpAmount);
+
+    // Update liquidity provided mapping
+    liquidityProvided[msg.sender] += lpAmount;
+
+    //emit LiquidityAdded(msg.sender, baseAmount, quoteAmount, lpAmount);
+}
+
+function removeLiquidity(uint256 lpAmount) external {
+    require(lpAmount > 0, "Cannot remove zero liquidity");
+    require(lpToken.balanceOf(msg.sender) >= lpAmount, "Insufficient LP tokens");
+    
+    // Burn LP tokens from sender
+    lpToken.burnFrom(msg.sender, lpAmount);
+
+    // Get the total liquidity in the pool (base + quote)
+    uint256 totalBaseLiquidity = baseToken.balanceOf(address(this));
+    uint256 totalQuoteLiquidity = quoteToken.balanceOf(address(this));
+    
+    // Check total liquidity in LP tokens to avoid division by zero
+    uint256 totalLPLiquidity = lpToken.totalSupply();
+    require(totalLPLiquidity > 0, "No liquidity in the pool");
+
+    // Calculate the proportion of liquidity provided by lpAmount
+    uint256 baseAmount = (lpAmount * totalBaseLiquidity) / totalLPLiquidity;
+    uint256 quoteAmount = (lpAmount * totalQuoteLiquidity) / totalLPLiquidity;
+
+    uint256 baseFee = (lpAmount * baseToken.balanceOf(address(this))) / lpToken.totalSupply();
+    uint256 quoteFee = (lpAmount * quoteToken.balanceOf(address(this))) / lpToken.totalSupply();
+
+    baseAmount += baseFee;
+    quoteAmount += quoteFee;
+
+    // Ensure the contract has enough liquidity to return
+    require(baseAmount <= totalBaseLiquidity, "Insufficient base liquidity in the pool");
+    require(quoteAmount <= totalQuoteLiquidity, "Insufficient quote liquidity in the pool");
+
+    // Transfer proportionate base and quote tokens back to the user
+    baseToken.transfer(msg.sender, baseAmount);
+    quoteToken.transfer(msg.sender, quoteAmount);
+
+    // Update the liquidity provided mapping
+    liquidityProvided[msg.sender] -= lpAmount;
+    require(liquidityProvided[msg.sender] >= 0, "Negative liquidity provided");
+
+    //emit LiquidityRemoved(msg.sender, baseAmount, quoteAmount, lpAmount);
+}
+
 
     // TODO: we should probably move something like this into the solidity sdk
     function convertToUint(
@@ -121,6 +218,8 @@ contract OracleSwap {
     function quoteBalance() public view returns (uint256) {
         return quoteToken.balanceOf(address(this));
     }
+
+    //Funtion to add liquidity and mint LP token for depositor
 
     // Send all tokens in the oracle AMM pool to the caller of this method.
     // (This function is for demo purposes only. You wouldn't include this on a real contract.)
