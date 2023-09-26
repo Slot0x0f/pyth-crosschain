@@ -31,6 +31,9 @@ contract OracleSwap {
     mapping(address => uint256) public liquidityProvided;
     uint256 public feeRateBips = 30; // 0.3% fee rate. 
 
+    event LiquidityRemoved(address from, uint baseAmount,uint  quoteAmount,uint lpAmount);
+    event LiquidityAdded(address from, uint baseAmount,uint  quoteAmount,uint lpAmount);
+
 
     constructor(
         address _pyth,
@@ -143,7 +146,7 @@ function addLiquidity(uint256 baseAmountDesired, uint256 quoteAmountDesired) ext
     // Update liquidity provided mapping
     liquidityProvided[msg.sender] += lpAmount;
 
-    //emit LiquidityAdded(msg.sender, baseAmount, quoteAmount, lpAmount);
+    emit LiquidityAdded(msg.sender, baseAmount, quoteAmount, lpAmount);
 }
 
 function removeLiquidity(uint256 lpAmount) external {
@@ -183,7 +186,7 @@ function removeLiquidity(uint256 lpAmount) external {
     liquidityProvided[msg.sender] -= lpAmount;
     require(liquidityProvided[msg.sender] >= 0, "Negative liquidity provided");
 
-    //emit LiquidityRemoved(msg.sender, baseAmount, quoteAmount, lpAmount);
+    emit LiquidityRemoved(msg.sender, baseAmount, quoteAmount, lpAmount);
 }
 
 
