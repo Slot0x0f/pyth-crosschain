@@ -95,3 +95,13 @@ optimism goerli addresses
 brl 0x8e2a09b54fF35Cc4fe3e7dba68bF4173cC559C69
 usd 0x98cDc14fe999435F3d4C2E65eC8863e0d70493Df
 swap contract 0xf3161b2B32761B46C084a7e1d8993C19703C09e7
+
+Enhanced Features
+1. Liquidity Provisioning
+Users can now add liquidity to the OracleSwap contract. The contract calculates the amount of base and quote tokens to be deposited based on existing pool ratios.
+2. LP Token Minting
+When liquidity is provided, users receive LP tokens representing their share in the pool.
+3. Liquidity Removal
+Users can remove liquidity and receive their proportional share of base and quote tokens from the pool. Proportional fees are also distributed during liquidity removal.
+4. Fee Integration
+A fee is imposed on each swap, which is accumulated and later distributed to liquidity providers as an incentive.
